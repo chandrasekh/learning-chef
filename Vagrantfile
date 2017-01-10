@@ -68,4 +68,10 @@ Vagrant.configure("2") do |config|
   #   apt-get update
   #   apt-get install -y apache2
   # SHELL
+  config.vm.provision :chef_client do |chef|
+    chef.chef_server_url = "https://api.opscode.com/organizations/ncodei"
+    chef.validation_key_path = "./.chef/ncodei-validator.pem"
+    chef.validation_client_name = "ncodei-validator"
+    chef.node_name = "chandrasek_vm"
+  end
 end
