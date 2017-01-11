@@ -1,268 +1,200 @@
-# Application_Ruby Cookbook
-
-[![Build Status](https://img.shields.io/travis/poise/application_ruby.svg)](https://travis-ci.org/poise/application_ruby)
-[![Gem Version](https://img.shields.io/gem/v/poise-application-ruby.svg)](https://rubygems.org/gems/poise-application-ruby)
-[![Cookbook Version](https://img.shields.io/cookbook/v/application_ruby.svg)](https://supermarket.chef.io/cookbooks/application_ruby)
-[![Coverage](https://img.shields.io/codecov/c/github/poise/application_ruby.svg)](https://codecov.io/github/poise/application_ruby)
-[![Gemnasium](https://img.shields.io/gemnasium/poise/application_ruby.svg)](https://gemnasium.com/poise/application_ruby)
-[![License](https://img.shields.io/badge/license-Apache_2-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
-
-A [Chef](https://www.chef.io/) cookbook to deploy Ruby applications.
-
-## Quick Start
-
-To deploy a Rails application from git:
-
-```ruby
-application '/srv/myapp' do
-  git 'https://github.com/example/myapp.git'
-  bundle_install do
-    deployment true
-    without %w{development test}
-  end
-  rails do
-    database 'sqlite3:///db.sqlite3'
-    secret_token 'd78fe08df56c9'
-    migrate true
-  end
-  unicorn do
-    port 8000
-  end
-end
-```
+Description
+===========
 
-## Requirements
-
-Chef 12 or newer is required.
+This cookbook is designed to be able to describe and deploy Ruby web applications. Currently supported:
 
-## Resources
-
-### `application_bundle_install`
-
-The `application_bundle_install` resource installs gems using Bundler for a
-deployment.
-
-```ruby
-application '/srv/myapp' do
-  bundle_install do
-    deployment true
-    without %w{development test}
-  end
-end
-```
-
-All actions and properties are the same as the [`bundle_install` resource](https://github.com/poise/poise-ruby#bundle_install).
-
-### `application_rackup`
-
-The `application_rackup` resource creates a service for `rackup`.
-
-```ruby
-application '/srv/myapp' do
-  rackup do
-    port 8000
-  end
-end
-```
-
-#### Actions
-
-* `:enable` – Create, enable and start the service. *(default)*
-* `:disable` – Stop, disable, and destroy the service.
-* `:start` – Start the service.
-* `:stop` – Stop the service.
-* `:restart` – Stop and then start the service.
-* `:reload` – Send the configured reload signal to the service.
-
-#### Properties
-
-* `path` – Base path for the application. *(name attribute)*
-* `port` – Port to listen on. *(default: 80)*
-* `service_name` – Name of the service to create. *(default: auto-detect)*
-# `user` – User to run the service as. *(default: application owner)*
-
-### `application_rails`
+* Ruby on Rails
+* Apache 2 with Passenger
+* Unicorn
+* Memcached client
 
-The `application_rails` resource
-
-```ruby
-application '/srv/myapp' do
-  rails do
-    database 'sqlite3:///db.sqlite3'
-    secret_token 'd78fe08df56c9'
-    migrate true
-  end
-end
-```
+Note that this cookbook provides the Ruby-specific bindings for the `application` cookbook; you will find general documentation in that cookbook.
 
-#### Actions
+Other application stacks may be supported at a later date.
 
-* `:deploy` – Create config files and run required deployments steps. *(default)*
+Requirements
+============
 
-#### Properties
+Chef 0.10.0 or higher required (for Chef environment use).
 
-* `path` – Base path for the application. *(name attribute)*
-* `database` – Database settings for Rails. See [the database section
-  below](#database-parameters) for more information. *(option collector)*
-* `migrate` – Run database migrations. *(default: false)*
-* `precompile_assets` – Run `rake assets:precompile`. *(default: auto-detect)()
-* `rails_env` – Rails environment name. *(default: node.chef_environment)*
-* `secret_token` – Secret token for Rails session verification et al.
-* `secrets_mode` – Secrets configuration mode. Set to `:yaml` to generate a
-  Rails 4.2 secrets.yml. Set to `:initializer` to update
-  `config/initializers/secret_token.rb`. *(default: auto-detect)*
-
-**NOTE:** At this time `secrets_mode :initializer` is not implemented.
+The following Opscode cookbooks are dependencies:
 
-#### Database Parameters
+* application
+* apache2
+* passenger_apache2
+* runit
+* unicorn
 
-The database parameters can be set in three ways: URL, hash, and block.
+Resources/Providers
+==========
 
-If you have a single URL for the parameters, you can pass it directly to
-`database`:
+The LWRPs provided by this cookbook are not meant to be used by themselves; make sure you are familiar with the `application` cookbook before proceeding.
 
-```ruby
-rails do
-  database 'mysql2://myuser@dbhost/myapp'
-end
-```
+rails
+------
 
-Passing a single URL will also set the `$DATABASE_URL` environment variable
-automatically for compatibility with Heroku-based applications.
+The `rails` sub-resource LWRP deals with deploying Ruby on Rails webapps from an SCM repository. It uses the `deploy_revision` LWRP to perform the bulk of its tasks, and many concepts and parameters map directly to it. Check the documentation for `deploy_revision` for more information.
 
-As with other option collector resources, you can pass individual settings as
-either a hash or block:
+For applications that use Bundler, if a Gemfile.lock is present then gems will be installed with `bundle install --deployment`, which results in gems being installed inside the application directory.
 
-```ruby
-rails do
-  database do
-    adapter 'mysql2'
-    username 'myuser'
-    host 'dbhost'
-    database 'myapp'
-  end
-end
+When running Bundler, unnecessary groups will be skipped. The list of groups to skip is determined with this algorithm:
 
-rails do
-  database({
-    adapter: 'mysql2',
-    username: 'myuser',
-    host: 'dbhost',
-    database: 'myapp',
-  })
-end
-```
+* start with this Array: `development test cucumber staging production`;
+* the group corresponding to the current environment will be removed from the Array;
+* if the `bundler_without_groups` attribute is set, those groups will be added to the Array.
 
-### `application_ruby`
+For example, for a node running in the `production` Chef environment, and given:
 
-The `application_ruby` resource installs a Ruby runtime for the deployment.
+    bundler_without_groups ["mysql"]
 
-```ruby
-application '/srv/myapp' do
-  ruby '2.2'
-end
-```
+Bundler will be run with:
 
-All actions and properties are the same as the [`ruby_runtime` resource](https://github.com/poise/poise-ruby#ruby_runtime).
+    bundle install --without development test cucumber staging mysql
 
-### `application_ruby_gem`
+# Attribute Parameters
 
-The `application_ruby_gem` resource installs Ruby gems for the deployment.
+- gems: an Array of gems to install
+- bundler: if true, `bundler` will always be used; if false it will never be. Defaults to true if `gems` includes bundler
+- bundle_command: The command to execute when calling bundler commands.  Useful for specifing alternate commands such as RVM wrappers.  Defaults to `bundle`.
+- bundler_deployment: if true, Bundler will be run with the `--deployment` options. Defaults to true if a `Gemfile.lock` is present
+- bundler\_without\_groups: an Array of additional Bundler groups to skip
+- database\_master\_role: if a role name is provided, a Chef search will be run to find a node with the role in the same environment as the current role. If a node is found, its IP address will be used when rendering the `database.yml` file, but see the "Database block parameters" section below
+- database\_template: the name of the template that will be rendered to create the `database.yml` file; if specified it will be looked up in the application cookbook. Defaults to "database.yml.erb" from this cookbook
+- database: a block containing additional parameters for configuring the database connection
+- precompile\_assets: if true, precompile assets for the Rails 3 asset pipeline. The default is nil, in which case we will try to autodetect whether the pipeline is in use by looking for `config/assets.yml`
 
-```ruby
-application '/srv/myapp' do
-  ruby_gem 'rake'
-end
-```
+# Database and memcached block parameters
 
-All actions and properties are the same as the [`ruby_gem` resource](https://github.com/poise/poise-ruby#ruby_gem).
+The database and memcached blocks can accept any method, which will result in an entry being created in the `@database` and `@memcached_envs` Hashes which are passed to the respective templates. See Usage below for more information.
 
-### `application_ruby_execute`
+passenger\_apache2
+------------------
 
-The `application_ruby_execute` resource runs Ruby commands for the deployment.
+The `passenger_apache2` sub-resource LWRP configures Apache 2 with Passenger to run the application.
 
-```ruby
-application '/srv/myapp' do
-  ruby_execute 'rake'
-end
-```
+# Attribute Parameters
 
-All actions and properties are the same as the [`ruby_execute` resource](https://github.com/poise/poise-ruby#ruby_execute),
-except that the `cwd`, `environment`, `group`, and `user` properties default to
-the application-level data if not specified.
+- server\_aliases: an Array of server aliases
+- webapp\_template: the template to render to create the virtual host configuration. Defaults to "#{application name}.conf.erb"
+- params: an Hash of extra parameters that will be passed to the template
 
-### `application_thin`
+unicorn
+-------
 
-The `application_thin` resource creates a service for `thin`.
+The `unicorn` sub-resource LWRP configures Unicorn to run the application.
 
-```ruby
-application '/srv/myapp' do
-  thin do
-    port 8000
-  end
-end
-```
+# Attribute Parameters
 
-#### Actions
-
-* `:enable` – Create, enable and start the service. *(default)*
-* `:disable` – Stop, disable, and destroy the service.
-* `:start` – Start the service.
-* `:stop` – Stop the service.
-* `:restart` – Stop and then start the service.
-* `:reload` – Send the configured reload signal to the service.
-
-#### Properties
-
-* `path` – Base path for the application. *(name attribute)*
-* `config_path` – Path to a Thin configuration file.
-* `port` – Port to listen on. *(default: 80)*
-* `service_name` – Name of the service to create. *(default: auto-detect)*
-# `user` – User to run the service as. *(default: application owner)*
-
-### `application_unicorn`
-
-The `application_unicorn` resource creates a service for `unicorn`.
-
-```ruby
-application '/srv/myapp' do
-  unicorn do
-    port 8000
-  end
-end
-```
-
-#### Actions
-
-* `:enable` – Create, enable and start the service. *(default)*
-* `:disable` – Stop, disable, and destroy the service.
-* `:start` – Start the service.
-* `:stop` – Stop the service.
-* `:restart` – Stop and then start the service.
-* `:reload` – Send the configured reload signal to the service.
-
-#### Properties
-
-* `path` – Base path for the application. *(name attribute)*
-* `port` – Port to listen on. *(default: 80)*
-* `service_name` – Name of the service to create. *(default: auto-detect)*
-# `user` – User to run the service as. *(default: application owner)*
-
-## Sponsors
-
-Development sponsored by [Chef Software](https://www.chef.io/), [Symonds & Son](http://symondsandson.com/), and [Orion](https://www.orionlabs.co/).
-
-The Poise test server infrastructure is sponsored by [Rackspace](https://rackspace.com/).
-
-## License
-
-Copyright 2015, Noah Kantrowitz
+- bundler: if true, Unicorn will be run with `bundle exec`; if false it will be installed and run from the default gem path. Defaults to inheriting this setting from the rails LWRP
+- preload_app: passed to the `unicorn_config` LWRP
+- worker_processes: passed to the `unicorn_config` LWRP
+- before_exec: passed to the `unicorn_config` LWRP
+- before_fork: passed to the `unicorn_config` LWRP
+- after_fork: passed to the `unicorn_config` LWRP
+- port: passed to the `unicorn_config` LWRP
+- listen: passed to the `unicorn_config` LWRP; overrides port
+- worker_timeout: passed to the `unicorn_config` LWRP
+- forked_user: passed to the `unicorn_config` LWRP
+- forked_group: passed to the `unicorn_config` LWRP
+- pid: passed to the `unicorn_config` LWRP
+- stderr_path: passed to the `unicorn_config` LWRP
+- stdout_path: passed to the `unicorn_config` LWRP
+- unicorn_command_line: passed to the `unicorn_config` LWRP
+- copy_on_write: passed to the `unicorn_config` LWRP
+- enable_stats: passed to the `unicorn_config` LWRP
+
+memcached
+---------
+
+The `memcached` sub-resource LWRP manages configuration for a Rails-compatible Memcached client.
+
+# Attribute Parameters
+
+- role: a Chef search will be run to find a node with the role in the same environment as the current node. If a node is found, its IP address will be used when rendering the `memcached.yml` file.
+- options: a block containing additional parameters for configuring the memcached client
+
+Usage
+=====
+
+A sample application that needs a database connection:
+
+    application "redmine" do
+      path "/usr/local/www/redmine"
+
+      rails do
+        database do
+          database "redmine"
+          username "redmine"
+          password "awesome_password"
+        end
+        database_master_role "redmine_database_master"
+      end
+
+      passenger_apache2 do
+      end
+    end
+
+You can invoke any method on the database block:
+
+    application "my-app" do
+      path "..."
+      repository "..."
+      revision "..."
+
+      rails do
+        database_master_role "my-app_database_master"
+        database do
+          database 'name'
+          quorum 2
+          replicas %w[Huey Dewey Louie]
+        end
+      end
+    end
+
+The corresponding entries will be passed to the context template:
+
+    <%= @database['quorum'] %>
+    <%= @database['replicas'].join(',') %>
+
+A sample application that connects to memcached:
+
+    application "my-app" do
+      path "..."
+      repository "..."
+      revision "..."
+
+      memcached do
+        role "memcached_master"
+        options do
+          ttl 1800
+          memory 256
+        end
+      end
+    end
+
+This will generate a config/memcached.yml file:
+
+    production:
+      ttl: 1800
+      memory: 256
+      servers:
+        - 192.168.0.10:11211
+
+License and Author
+==================
+
+Author:: Adam Jacob (<adam@opscode.com>)
+Author:: Andrea Campi (<andrea.campi@zephirworks.com.com>)
+Author:: Joshua Timberman (<joshua@opscode.com>)
+Author:: Seth Chisamore (<schisamo@opscode.com>)
+
+Copyright 2009-2012, Opscode, Inc.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-http://www.apache.org/licenses/LICENSE-2.0
+    http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
