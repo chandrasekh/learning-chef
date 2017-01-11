@@ -1,259 +1,206 @@
-# Application cookbook
+Application cookbook
+====================
+This cookbook is designed to be able to describe and deploy web applications. It provides the basic infrastructure; other cookbooks are required to support specific combinations of frameworks and application servers. The following cookbooks are available at this time:
 
-[![Build Status](https://img.shields.io/travis/poise/application.svg)](https://travis-ci.org/poise/application)
-[![Gem Version](https://img.shields.io/gem/v/poise-application.svg)](https://rubygems.org/gems/poise-application)
-[![Cookbook Version](https://img.shields.io/cookbook/v/application.svg)](https://supermarket.chef.io/cookbooks/application)
-[![Coverage](https://img.shields.io/codeclimate/coverage/github/poise/application.svg)](https://codeclimate.com/github/poise/application)
-[![Gemnasium](https://img.shields.io/gemnasium/poise/application.svg)](https://gemnasium.com/poise/application)
-[![License](https://img.shields.io/badge/license-Apache_2-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
+- [application_java](https://github.com/opscode-cookbooks/application_java) (Java and Tomcat)
+- [application_nginx](https://github.com/opscode-cookbooks/application_nginx) (nginx reverse proxy)
+- [application_php](https://github.com/opscode-cookbooks/application_php) (PHP with `mod_php_apache2`)
+- [application_python](https://github.com/opscode-cookbooks/application_python) (Django with Gunicorn)
+- [application_ruby](https://github.com/opscode-cookbooks/application_ruby) (Rails with Passenger or Unicorn)
 
-A [Chef](https://www.chef.io/) cookbook to deploy applications.
 
-## Getting Started
+Backwards Compatibility
+-----------------------
+- Version 4.0.0 dropped support for Chef 10
+- Version 2.0.0 dropped support for the `apps` data bag.
 
-The application cookbook provides a central framework to deploy applications
-using Chef. Generally this will be web applications using things like Rails,
-Django, or NodeJS, but the framework makes no specific assumptions. The core
-`application` resource provides DSL support and helpers, but the heavy lifting
-is all done in specific plugins detailed below. Each deployment starts with
-an `application` resource:
+
+Requirements
+------------
+The previous dependencies have been moved out to the application-stack-specific cookbooks, and this cookbook has no external dependencies.
+
+
+Resources/Providers
+-------------------
+The `application` LWRP configures the basic properties of most applications, regardless of the framework or application server they use. These include:
+
+- SCM information for the deployment, such as the repository URL and branch name;
+- deployment destination, including the filesystem path to deploy to;
+- any OS packages to install as dependencies;
+- optional callback to control the deployment.
+
+This LWRP uses the `deploy_revision` LWRP to perform the bulk of its tasks, and many concepts and parameters map directly to it. Check the documentation for `deploy_revision` for more information.
+
+Configuration of framework-specific aspects of the application are performed by invoking a sub-resource; see the appropriate cookbook for more documentation.
+
+### Actions
+- `:deploy`: deploy an application, including any necessary configuration, restarting the associated service if necessary
+- `:force_deploy`: same as `:deploy`, but it will send a `:force_deploy` action to the deploy resource, directing it to deploy the application even if the same revision is already deployed
+
+### Attribute Parameters
+- `name`: name attribute. The name of the application you are setting up. This will be used to derive the default value for other attribute
+- `packages`: an Array or Hash of packages to be installed before starting the deployment
+- `path`: target path of the deployment; it will be created if it does not exist
+- `owner`: the user that shall own the target path
+- `group`: the group that shall own the target path
+- `keep_releases`: count of keep releases
+- `strategy`: the underlying LWRP that will be used to perform the deployment. The default is `:deploy_revision`, and it should never be necessary to change it
+- `scm_provider`: the provider class to use for the deployment. It defaults to `Chef::Provider::Git`, you can set it to `Chef::Provider::Subversion` to deploy from an SVN repository
+- `repository`: the URL of the repository the application should be checked out from
+- `revision`: an identifier pointing to the revision that should be checked out
+- `deploy_key`: the private key to use to access the repository via SSH, or path to a file containing the key
+- `rollback_on_error`: if true, exceptions during a deployment will be caught and a clean rollback to the previous version will be attempted; the exception will then be re-raised. Defaults to true; change it only if you know what you are doing
+- `environment`: a Hash of environment variables to set while running migrations
+- `purge_before_symlink`: an Array of paths (relative to the checkout) to remove before creating symlinks
+- `create_dirs_before_symlink`: an Array of paths (relative to the checkout) pointing to directories to create before creating symlinks
+- `symlinks`: a Hash of shared/dir/path => release/dir/path. It determines which files and dirs in the shared directory get symlinked to the current release directory
+- `symlink_before_migrate`: similar to symlinks, except that they will be linked before any migration is run
+- `migrate`: if `true` then migrations will be run; defaults to false
+- `migration_command`: a command to run to migrate the application from the previous to the current state
+- `restart_command`: a command to run when restarting the application
+- `environment_name`: the name of a framework-specific "environment" (for example the Rails environment). By default it is the same as the Chef environment, unless it is `_default`, in which case it is set to `production`
+- `enable_submodules`: whether to enable git submodules in the deploy, passed into the deploy resource.
+
+### Callback Attributes
+You can also set a few attributes on this LWRP that are interpreted as callback to be called at specific points during a deployment. If you pass a block, it will be evaluated within a new context. If you pass a string, it will be interpreted as a path (relative to the release directory) to a file; if it exists, it will be loaded and evaluated as though it were a Chef recipe.
+
+The following callback attributes are available:
+
+- `before_deploy`: invoked immediately after initial setup and before the deployment proper is started. This callback will be invoked on every Chef run
+- `before_migrate`
+- `before_symlink`
+- `before_restart`
+- `after_restart`
+
+### Sub-resources
+Anything that is not a known attribute will be interpreted as the name of a sub-resource; the resource will be looked up, and any nested attribute will be passed to it. More than one sub-resource can be added to an application; the order is significant, with the latter sub-resources overriding any sub-resource that comes before.
+
+Sub-resources can set their own values for some attributes; if they do, they will be merged together with the attribute set on the main resource. The attributes that support this behavior are the following:
+
+- `environment`: environment variables from the application and from sub-resources will be merged together, with later resources overriding values set in the application or previous resources
+- `migration_command`: commands from the application and from sub-resources will be concatenated together joined with '&&' and run as a single shell command. The migration will only succeed if all the commands succeed
+- `restart_command`: commands from the application and from sub-resources will be evaluated in order
+- `symlink_before_migrate`: will be concatenated as a single array
+- `callbacks`: sub-resources callbacks will be invoked first, followed by the application callbacks
+
+
+Usage
+-----
+To use the application cookbook we recommend creating a cookbook named after the application, e.g. `my_app`. In `metadata.rb` you should declare a dependency on this cookbook and any framework cookbook the application may need. For example a Rails application may include:
 
 ```ruby
-application '/path/to/deploy' do
-  owner 'root'
-  group 'root'
+depends 'application'
+depends 'application_ruby'
+```
 
-  # ...
+The default recipe should describe your application using the `application` LWRP; you may also include additional recipes, for example to set up a database, queues, search engines and other components of your application.
+
+A recipe using this LWRP may look like this:
+
+```ruby
+application 'my_app' do
+  path  '/deploy/to/dir'
+  owner 'app-user'
+  group 'app-group'
+
+  repository 'http://git.example.com/my-app.git'
+  revision   'production'
+
+  # Apply the rails LWRP from application_ruby
+  rails do
+    # Rails-specific configuration. See the README in the
+    # application_ruby cookbook for more information.
+  end
+
+  # Apply the passenger_apache2 LWRP, also from application_ruby
+  passenger_apache2 do
+    # Passenger-specific configuration.
+  end
 end
 ```
 
-The `application` resource uses the Poise subresource system for plugins. This
-means you configure the steps of the deployment like normal recipe code inside
-the `application` resource, with a few special additions:
+You can of course use any code necessary to determine the value of attributes:
 
 ```ruby
-application '/path/to/deploy' do
-  # Application resource properties.
-  owner 'root'
-  group 'root'
-
-  # Subresources, like normal recipe code.
-  package 'ruby'
-  git '/path/to/deploy' do
-    repository 'https://github.com/example/myapp.git'
-  end
-  application_rails '/path/to/deploy' do
-    database 'mysql://dbhost/myapp'
-  end
+application 'my_app' do
+  repository 'http://git.example.com/my-app.git'
+  revision   node.chef_environment == 'production' ? 'production' : 'develop'
 end
 ```
 
-When evaluating the recipe inside the `application` resource, it first checks
-for `application_#{resource}`, as well as looking for an LWRP of the same name
-in any cookbook starting with `application_`. This means that a resource named
-`application_foo` can be used as `foo` inside the `application` resource:
+Attributes from the application and from sub-resources are merged together:
 
 ```ruby
-application '/path/to/deploy' do
-  owner 'root'
-  group 'root'
-
-  rails '/path/to/deploy' do
-    database 'mysql://dbhost/myapp'
-  end
-end
-```
-
-Additionally if a resource inside the `application` block doesn't have a name,
-it uses the same name as the application resource itself:
-
-```ruby
-application '/path/to/deploy' do
-  owner 'root'
-  group 'root'
+application 'my_app' do
+  restart_command 'kill -1 `cat /var/run/one.pid`'
+  environment     'LC_ALL' => 'en', 'FOO' => 'bar'
 
   rails do
-    database 'mysql://dbhost/myapp'
+    restart_command 'touch /tmp/something'
+    environment     'LC_ALL' => 'en_US'
+  end
+
+  passenger_apache2 do
+    environment 'FOO' => 'baz'
   end
 end
+
+# at the end, you will have:
+#
+# restart_command #=> kill -1 `cat /var/run/one.pid` && touch /tmp/something
+# environment #=> LC_ALL=en_US FOO=baz
 ```
 
-Other than those two special features, the recipe code inside the `application`
-resource is processed just like any other recipe.
-
-## Available Plugins
-
-* [`application_git`](https://github.com/poise/application_git) – Deploy
-  application code from a git repository.
-* [`application_ruby`](https://github.com/poise/application_ruby) – Manage Ruby
-  deployments, such as Rails or Sinatra applications.
-* [`application_python`](https://github.com/poise/application_python) – Manage
-  Python deployments, such as Django or Flask applications.
-* [`application_javascript`](https://github.com/poise/application_javascript) –
-  Manage server-side JavaScript deployments using Node.js or io.js.
-* `application_java` – *Coming soon!*
-* `application_go` – *Coming soon!*
-* `application_erlang` – *Coming soon!*
-
-## Requirements
-
-Chef 12 or newer is required.
-
-## Resources
-
-### `application`
-
-The `application` resource has top-level configuration properties for each
-deployment and acts as a container for other deployment plugin resources.
+Most databases have the concept of migrations (or you can just use your own):
 
 ```ruby
-application '/opt/test_sinatra' do
-  git 'https://github.com/example/my_sinatra_app.git'
-  bundle_install do
-    deployment true
-  end
-  unicorn do
-    port 9000
+application 'my_app' do
+  path  '/deploy/to/dir'
+  owner 'app-user'
+  group 'app-group'
+
+  repository 'http://git.example.com/my-app.git'
+  revision   'production'
+
+  php do
+    migrate true
+    migration_command 'your-applications-migrate-command'
   end
 end
 ```
 
-#### Actions
+This will run `your-applications-migrate-command`, with the current directory set to the directory of the current checkout.
 
-* `:deploy` – Deploy the application. *(default)*
-* `:start` - Run `:start` on all subresources that support it.
-* `:stop` - Run `:stop` on all subresources that support it.
-* `:restart` - Run `:restart` on all subresources that support it.
-* `:reload` - Run `:reload` on all subresources that support it.
-
-#### Properties
-
-* `path` – Path to deploy the application to. *(name attribute)*
-* `environment` – Environment variables for all application deployment steps.
-* `group` – System group to deploy the application as.
-* `owner` – System user to deploy the application as.
-* `action_on_update` – Action to run on the application resource when any
-  subresource is updated. *(default: restart)*
-* `action_on_update_immediately` – Run the `action_on_update` notification with
-  `:immediately`. *(default: false)*
-
-### `application_cookbook_file`, `application_file`, `application_template`
-
-The `application_cookbook_file`, `application_file`, and `application_template`
-resources extend the core Chef resources to take some application-level
-configuration in to account:
+To use the application cookbook, we recommend creating a role named after the application, e.g. `my_app`. Create a Ruby DSL role in your chef-repo, or create the role directly with knife.
 
 ```ruby
-application '/opt/myapp' do
-  template 'myapp.conf' do
-    source 'myapp.conf.erb'
-  end
-end
+name 'my_app'
+description 'My application deployment'
+run_list([
+  'recipe[my_app::default]'
+])
 ```
 
-If the resource name is a relative path, it will be expanded relative to the
-application path. If an owner or group is declared for the application, those
-will be the default user and group for the resource.
+License and Authors
+-------------------
+- Author: Adam Jacob (<adam@opscode.com>)
+- Author: Andrea Campi (<andrea.campi@zephirworks.com.com>)
+- Author: Joshua Timberman (<joshua@opscode.com>)
+- Author: Noah Kantrowitz  (<noah@opscode.com>)
+- Author: Seth Chisamore (<schisamo@opscode.com>)
 
-All other actions and properties are the same as the similar resource in core Chef.
-
-## Examples
-
-Some test recipes are available as examples for common application frameworks:
-
-* [Sinatra](https://github.com/poise/application_ruby/blob/master/test/cookbooks/application_ruby_test/recipes/sinatra.rb)
-* [Rails](https://github.com/poise/application_ruby/blob/master/test/cookbooks/application_ruby_test/recipes/rails.rb)
-* [Flask](https://github.com/poise/application_python/blob/master/test/cookbooks/application_python_test/recipes/flask.rb)
-* [Django](https://github.com/poise/application_python/blob/master/test/cookbooks/application_python_test/recipes/django.rb)
-* [Express](https://github.com/poise/application_javascript/blob/master/test/cookbooks/application_javascript_test/recipes/express.rb)
-
-## Upgrading From 4.x
-
-While the overall design of the revamped application resource is similar to the
-4.x version, some changes will need to be made. The `name` property no longer
-exists, with the name attribute being used as the path to the deployment.
-The `packages` property has been removed as this is more easily handled via
-normal recipe code.
-
-The SCM-related properties like `repository` and `revision` are now handled by
-normal plugins. If you were deploying from a private git repository you will
-likely want to use the `application_git` cookbook, otherwise just use the
-built-in `git` or `svn` resources as per normal.
-
-The properties related to the `deploy` resource like `strategy` and `symlinks`
-have been removed. The `deploy` resource is no longer used so these aren't
-relevant. As a side effect of this, you'll likely want to point the upgraded
-deployment at a new folder or manually clean the `current` and `shared` folders
-from the existing folder. The pseudo-Capistrano layout used by the `deploy`
-resource has few benefits in a config-managed world and introduced a lot of
-complexity and moving pieces that are no longer required.
-
-With the removal of the `deploy` resource, the callback properties and commands
-are no longer used as well. Subresources no longer use the complex
-actions-as-callbacks arrangement as existed before, instead following normal
-Chef recipe flow. Individual subresources may need to be tweaked to work with
-newer versions of the cookbooks they come from, though most have stayed similar
-in overall approach.
-
-## Database Migrations and Chef
-
-Several of the web application deployment plugins include optional support to
-run database migrations from Chef. For "toy" applications where the app and
-database run together on a single machine, this is fine and is a nice time
-saver. For anything more complex I highly recommend not running database
-migrations from Chef. Some initial operations like creating the database and/or
-database user are more reasonable as they tend to be done only once and by their
-nature the application does not yet have users so some level of eventual
-consistency is more acceptable. With migrations on a production application, I
-encourage using Chef and the application cookbooks to handle deploying the code
-and writing configuration files, but use something more specific to run the
-actual migration task. [Fabric](http://www.fabfile.org/),
-[Capistrano](http://capistranorb.com/), and [Rundeck](http://rundeck.org/) are
-all good choices for this orchestration tooling.
-
-Migrations can generally be applied idempotently but they have unique
-constraints (pun definitely intended) that make them tricky in a Chef-like,
-convergence-based system. First and foremost is that many table alterations
-lock the table for updating for at least some period of time. That can mean that
-while staging the new code or configuration data can happen within a window, the
-migration itself needs to be run in careful lockstep with the rest of the
-deployment process (eg. moving things in and out of load balancers). Beyond
-that, while most web frameworks have internal idempotence checks for migrations,
-running the process on two servers at the same time can have unexpected effects.
-
-Overall migrations are best thought of as a procedural step rather than a
-declaratively modeled piece of the system.
-
-## Application Signals and Updates
-
-The `application` resource exposes `start`, `stop`, `restart`, and `reload`
-actions which will dispatch to any subresources attached to the application.
-This allows for generic application-level restart or reload signals that will
-work with any type of deployment.
-
-Additionally the `action_on_update` property is used to set a default
-notification so any subresource that updates will trigger an application
-restart or reload. This can be disabled by setting `action_on_update false` if
-you want to take manual control of service restarts.
-
-## Sponsors
-
-Development sponsored by [Chef Software](https://www.chef.io/), [Symonds & Son](http://symondsandson.com/), and [Orion](https://www.orionlabs.co/).
-
-The Poise test server infrastructure is sponsored by [Rackspace](https://rackspace.com/).
-
-## License
-
-Copyright 2015, Noah Kantrowitz
+```text
+Copyright 2009-2013, Opscode, Inc.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-http://www.apache.org/licenses/LICENSE-2.0
+    http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+```
