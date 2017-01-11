@@ -12,12 +12,13 @@ directory "/var/www/rails-apps/rails-demo" do
   recursive true
 end
 
-application "/var/www/rails-apps/rails-demo" do
+application "rails-demo" do
+  path "/var/www/rails-apps/rails-demo"
   owner "vagrant"
   group "vagrant"
-  git "https://github.com/mulderp/chef-demo.git"
-  bundle_install do
-    deployment true
+  repository "https://github.com/mulderp/chef-demo.git"
+  rails do 
+    bundler true
   end
-  passenger_enterprise
+  passenger_apache2
 end
