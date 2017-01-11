@@ -18,7 +18,7 @@ application "rails-demo" do
   group "vagrant"
   repository "https://github.com/mulderp/chef-demo.git"
   rails do 
-    bundler true
+    bundler false
   end
   passenger_apache2
 end
